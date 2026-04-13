@@ -1,0 +1,25 @@
+# 构建产物
+/mini-tmk-agent
+*.exe
+
+# 环境配置（含 API Key）
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Claude 本地配置
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 测试输出
+*.tmp
+output*.txt
+
+# 音频数据文件（体积大）
+Data/
