@@ -6,12 +6,23 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"Mini_TMK_Agent/internal/asr"
 	"Mini_TMK_Agent/internal/audio"
 	"Mini_TMK_Agent/internal/output"
 	"Mini_TMK_Agent/internal/translate"
 )
+
+// segmentResult 单段处理结果
+type segmentResult struct {
+	index   int
+	text    string
+	lang    string
+	trans   string
+	asrErr  error
+	transErr error
+}
 
 // FilePipeline 文件转录管道
 type FilePipeline struct {
@@ -21,6 +32,7 @@ type FilePipeline struct {
 	reader        audio.Reader
 	sourceLang    string
 	targetLang    string
+	concurrency   int // 并发数
 }
 
 // FilePipelineConfig 文件管道配置
@@ -30,10 +42,15 @@ type FilePipelineConfig struct {
 	Output        output.Output
 	SourceLang    string
 	TargetLang    string
+	Concurrency   int // 并发数，默认 4
 }
 
 // NewFilePipeline 创建文件转录管道
 func NewFilePipeline(cfg FilePipelineConfig) *FilePipeline {
+	cc := cfg.Concurrency
+	if cc <= 0 {
+		cc = 4
+	}
 	return &FilePipeline{
 		asrProvider:   cfg.ASRProvider,
 		transProvider: cfg.TransProvider,
@@ -41,14 +58,14 @@ func NewFilePipeline(cfg FilePipelineConfig) *FilePipeline {
 		reader:        audio.NewFileReader(),
 		sourceLang:    cfg.SourceLang,
 		targetLang:    cfg.TargetLang,
+		concurrency:   cc,
 	}
 }
 
-// Run 执行文件转录
+// Run 执行文件转录（ASR + 翻译并发处理）
 func (p *FilePipeline) Run(ctx context.Context, filePath, outputPath string) error {
 	p.out.OnInfo(fmt.Sprintf("读取文件: %s", filePath))
 
-	// 读取音频文件
 	pcmData, info, err := p.reader.Read(filePath)
 	if err != nil {
 		return fmt.Errorf("读取音频文件失败: %w", err)
@@ -56,55 +73,84 @@ func (p *FilePipeline) Run(ctx context.Context, filePath, outputPath string) err
 
 	p.out.OnInfo(fmt.Sprintf("音频时长: %.1f秒, 采样率: %dHz", info.Duration, info.SampleRate))
 
-	// 用 VAD 按静音边界分段
 	segments := p.segmentByVAD(pcmData)
-	p.out.OnInfo(fmt.Sprintf("检测到 %d 个语音段", len(segments)))
+	total := len(segments)
+	p.out.OnInfo(fmt.Sprintf("检测到 %d 个语音段，并发处理中...", total))
 
-	var fileContent strings.Builder
+	// 并发处理每段：ASR + 翻译
+	results := make([]segmentResult, total)
+	sem := make(chan struct{}, p.concurrency)
+	var wg sync.WaitGroup
 
-	for i, segment := range segments {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if len(segment) < 3200 { // 至少 100ms 数据
+	for i, seg := range segments {
+		if len(seg) < 3200 {
+			results[i] = segmentResult{index: i}
 			continue
 		}
 
-		// ASR
-		p.out.OnInfo(fmt.Sprintf("转录第 %d/%d 段...", i+1, len(segments)))
-		result, err := p.asrProvider.Transcribe(ctx, segment, p.sourceLang)
-		if err != nil {
-			p.out.OnError(fmt.Sprintf("第 %d 段转录失败: %v", i+1, err))
-			continue
-		}
+		wg.Add(1)
+		sem <- struct{}{} // 获取信号量
+		go func(idx int, data []byte) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		if result.Text == "" {
-			continue
-		}
+			r := segmentResult{index: idx}
 
-		fileContent.WriteString("[原文] " + result.Text + "\n")
-		p.out.OnSourceText(result.Text)
+			// ASR
+			p.out.OnInfo(fmt.Sprintf("转录第 %d/%d 段...", idx+1, total))
+			asrResult, err := p.asrProvider.Transcribe(ctx, data, p.sourceLang)
+			if err != nil {
+				r.asrErr = err
+				p.out.OnError(fmt.Sprintf("第 %d 段转录失败: %v", idx+1, err))
+				results[idx] = r
+				return
+			}
+			if asrResult.Text == "" {
+				results[idx] = r
+				return
+			}
+			r.text = asrResult.Text
+			r.lang = asrResult.Language
 
-		// 翻译
-		p.out.OnInfo(fmt.Sprintf("翻译第 %d/%d 段...", i+1, len(segments)))
-		var transText strings.Builder
-		err = p.transProvider.Translate(ctx, result.Text, result.Language, p.targetLang, func(chunk string) {
-			transText.WriteString(chunk)
-			p.out.OnTranslatedText(chunk)
-		})
-		if err != nil {
-			p.out.OnError(fmt.Sprintf("第 %d 段翻译失败: %v", i+1, err))
-			continue
-		}
-		p.out.OnTranslationEnd()
-
-		fileContent.WriteString("[译文] " + transText.String() + "\n\n")
+			// 翻译
+			p.out.OnInfo(fmt.Sprintf("翻译第 %d/%d 段...", idx+1, total))
+			var transText strings.Builder
+			err = p.transProvider.Translate(ctx, asrResult.Text, asrResult.Language, p.targetLang, func(chunk string) {
+				transText.WriteString(chunk)
+			})
+			if err != nil {
+				r.transErr = err
+				p.out.OnError(fmt.Sprintf("第 %d 段翻译失败: %v", idx+1, err))
+				results[idx] = r
+				return
+			}
+			r.trans = transText.String()
+			results[idx] = r
+		}(i, seg)
 	}
 
-	// 写入输出文件
+	wg.Wait()
+
+	// 按顺序输出结果
+	var fileContent strings.Builder
+	for _, r := range results {
+		if r.text == "" {
+			continue
+		}
+
+		p.out.OnSourceText(r.text)
+		if r.trans != "" {
+			p.out.OnTranslatedText(r.trans)
+			p.out.OnTranslationEnd()
+		}
+
+		fileContent.WriteString("[原文] " + r.text + "\n")
+		if r.trans != "" {
+			fileContent.WriteString("[译文] " + r.trans + "\n")
+		}
+		fileContent.WriteString("\n")
+	}
+
 	if outputPath != "" {
 		if err := os.WriteFile(outputPath, []byte(fileContent.String()), 0644); err != nil {
 			return fmt.Errorf("写入输出文件失败: %w", err)
@@ -117,8 +163,8 @@ func (p *FilePipeline) Run(ctx context.Context, filePath, outputPath string) err
 
 // segmentByVAD 用 VAD 按静音边界将 PCM 数据分段
 func (p *FilePipeline) segmentByVAD(pcmData []byte) [][]byte {
-	vad := audio.NewVAD(200, 800) // 200ms 帧，800ms 静音判定句子结束
-	vad.SetThreshold(300)         // 文件模式用固定阈值，跳过校准
+	vad := audio.NewVAD(200, 800)
+	vad.SetThreshold(300)
 	frameSize := vad.FrameSize()
 
 	var segments [][]byte
@@ -131,7 +177,6 @@ func (p *FilePipeline) segmentByVAD(pcmData []byte) [][]byte {
 		}
 	}
 
-	// 取出缓冲区中剩余的语音数据
 	if remaining := vad.Flush(); len(remaining) > 0 {
 		segments = append(segments, remaining)
 	}
