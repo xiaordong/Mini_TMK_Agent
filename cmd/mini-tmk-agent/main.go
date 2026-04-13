@@ -15,6 +15,7 @@ import (
 	"Mini_TMK_Agent/internal/output"
 	"Mini_TMK_Agent/internal/pipeline"
 	"Mini_TMK_Agent/internal/translate"
+	"Mini_TMK_Agent/internal/tts"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -27,6 +28,9 @@ var (
 	targetLang    string
 	asrProvider   string
 	transProvider string
+	ttsEnabled    bool
+	ttsProvider   string
+	ttsVoice      string
 	verbose       bool
 )
 
@@ -39,11 +43,17 @@ func main() {
 
 	rootCmd.PersistentFlags().StringVar(&asrProvider, "asr-provider", "", "ASR 服务商 (groq|siliconflow|openai)")
 	rootCmd.PersistentFlags().StringVar(&transProvider, "trans-provider", "", "翻译服务商 (groq|siliconflow|openai)")
+	rootCmd.PersistentFlags().BoolVar(&ttsEnabled, "tts", false, "启用 TTS 语音合成输出")
+	rootCmd.PersistentFlags().StringVar(&ttsProvider, "tts-provider", "", "TTS 服务商 (siliconflow|openai)")
+	rootCmd.PersistentFlags().StringVar(&ttsVoice, "tts-voice", "", "TTS 发音人")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "显示原文和详细信息")
 
 	// 将 flags 绑定到 viper
 	viper.BindPFlag("asr_provider", rootCmd.PersistentFlags().Lookup("asr-provider"))
 	viper.BindPFlag("trans_provider", rootCmd.PersistentFlags().Lookup("trans-provider"))
+	viper.BindPFlag("tts_enabled", rootCmd.PersistentFlags().Lookup("tts"))
+	viper.BindPFlag("tts_provider", rootCmd.PersistentFlags().Lookup("tts-provider"))
+	viper.BindPFlag("tts_voice", rootCmd.PersistentFlags().Lookup("tts-voice"))
 
 	// stream 命令
 	streamCmd := &cobra.Command{
@@ -111,9 +121,41 @@ func loadConfig() (*config.Config, error) {
 			cfg.TransModel = p.Model
 		}
 	}
+	if ttsEnabled {
+		cfg.TTSEnabled = true
+	}
+	if ttsProvider != "" {
+		cfg.TTSProvider = strings.ToLower(ttsProvider)
+		if p, ok := config.TTSDefaults[cfg.TTSProvider]; ok {
+			cfg.TTSBaseURL = p.BaseURL
+			cfg.TTSModel = p.Model
+		}
+	}
+	if ttsVoice != "" {
+		cfg.TTSVoice = ttsVoice
+	}
 	cfg.Verbose = verbose
 
 	return cfg, nil
+}
+
+// wrapTTSOutput 如果启用了 TTS，将 ConsoleOutput 包装为 TTSOutput
+func wrapTTSOutput(cfg *config.Config, consoleOut *output.ConsoleOutput, outputPath string) (output.Output, *output.TTSOutput, error) {
+	if !cfg.TTSEnabled {
+		return consoleOut, nil, nil
+	}
+
+	ttsProv, err := tts.NewProvider(cfg.TTSProvider, cfg.TTSBaseURL, cfg.TTSAPIKey, cfg.TTSModel, cfg.TTSVoice)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ttsOut := output.NewTTSOutput(consoleOut, output.TTSOutputConfig{
+		Provider:   ttsProv,
+		TargetLang: cfg.TargetLang,
+		OutputPath: outputPath,
+	})
+	return ttsOut, ttsOut, nil
 }
 
 func runStream(cmd *cobra.Command, args []string) error {
@@ -121,8 +163,15 @@ func runStream(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg.SourceLang = sourceLang
+	cfg.TargetLang = targetLang
 
-	out := output.NewConsoleOutput(cfg.Verbose)
+	consoleOut := output.NewConsoleOutput(cfg.Verbose)
+	out, ttsOut, err := wrapTTSOutput(cfg, consoleOut, "")
+	if err != nil {
+		return err
+	}
+
 	asrProv := asr.NewProvider(cfg.ASRBaseURL, cfg.ASRAPIKey, cfg.ASRModel)
 	transProv := translate.NewProvider(cfg.TransBaseURL, cfg.TransAPIKey, cfg.TransModel)
 	capturer := audio.NewMalgoCapturer(16000)
@@ -148,7 +197,14 @@ func runStream(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	return pipe.Run(ctx)
+	err = pipe.Run(ctx)
+	// 流模式结束后保存 TTS 音频
+	if ttsOut != nil {
+		if flushErr := ttsOut.Flush(); flushErr != nil {
+			out.OnError(fmt.Sprintf("TTS 输出失败: %v", flushErr))
+		}
+	}
+	return err
 }
 
 func runTranscript(cmd *cobra.Command, args []string) error {
@@ -156,11 +212,18 @@ func runTranscript(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg.SourceLang = sourceLang
+	cfg.TargetLang = targetLang
 
 	filePath, _ := cmd.Flags().GetString("file")
 	outputPath, _ := cmd.Flags().GetString("output")
 
-	out := output.NewConsoleOutput(cfg.Verbose)
+	consoleOut := output.NewConsoleOutput(cfg.Verbose)
+	out, ttsOut, err := wrapTTSOutput(cfg, consoleOut, outputPath)
+	if err != nil {
+		return err
+	}
+
 	asrProv := asr.NewProvider(cfg.ASRBaseURL, cfg.ASRAPIKey, cfg.ASRModel)
 	transProv := translate.NewProvider(cfg.TransBaseURL, cfg.TransAPIKey, cfg.TransModel)
 
@@ -172,5 +235,12 @@ func runTranscript(cmd *cobra.Command, args []string) error {
 		TargetLang:    targetLang,
 	})
 
-	return pipe.Run(context.Background(), filePath, outputPath)
+	err = pipe.Run(context.Background(), filePath, outputPath)
+	// 文件转录结束后保存 TTS 音频
+	if ttsOut != nil {
+		if flushErr := ttsOut.Flush(); flushErr != nil {
+			out.OnError(fmt.Sprintf("TTS 输出失败: %v", flushErr))
+		}
+	}
+	return err
 }

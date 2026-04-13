@@ -60,6 +60,32 @@ TMK_TRANS_API_KEY=sk-your-key-here
 
 支持 `.wav`、`.mp3`、`.pcm` 格式。
 
+### TTS 语音合成（可选）
+
+转录结果可自动生成目标语言的语音文件（MP3）：
+
+```bash
+# 转录 + TTS 语音输出（使用 SiliconFlow CosyVoice2）
+./mini-tmk-agent transcript --file input.wav --output output.txt \
+    --tts --tts-provider siliconflow
+# 生成 output.txt + output.mp3
+
+# 使用 OpenAI TTS
+./mini-tmk-agent transcript --file input.wav --output output.txt \
+    --tts --tts-provider openai --tts-voice nova
+
+# 流式同传也支持 TTS（每段独立保存为 segment_001.mp3 ...）
+./mini-tmk-agent stream -s zh -t en --tts --tts-provider siliconflow
+```
+
+也可通过环境变量启用（在 `.env` 中配置）：
+
+```env
+TMK_TTS_ENABLED=true
+TMK_TTS_PROVIDER=siliconflow
+TMK_TTS_API_KEY=your-key
+```
+
 ### 流式同传（需要麦克风 + GCC）
 
 ```bash
@@ -107,9 +133,10 @@ mini-tmk-agent stream [flags]
 | `--target-lang` | `-t` | `zh` | 目标语言 |
 | `--asr-provider` | | 配置文件 | ASR 服务商 (`groq`/`siliconflow`/`openai`) |
 | `--trans-provider` | | 配置文件 | 翻译服务商 |
+| `--tts` | | `false` | 启用 TTS 语音合成 |
+| `--tts-provider` | | 配置文件 | TTS 服务商 (`siliconflow`/`openai`) |
+| `--tts-voice` | | 配置文件 | TTS 发音人 |
 | `--verbose` | `-v` | `false` | 显示原文和详细信息 |
-
-### `transcript` — 文件转录
 
 ```bash
 mini-tmk-agent transcript --file <audio-file> [--output <output-file>] [flags]
@@ -123,6 +150,9 @@ mini-tmk-agent transcript --file <audio-file> [--output <output-file>] [flags]
 | `--target-lang` | `-t` | `zh` | 目标语言 |
 | `--asr-provider` | | 配置文件 | ASR 服务商 |
 | `--trans-provider` | | 配置文件 | 翻译服务商 |
+| `--tts` | | `false` | 启用 TTS 语音合成 |
+| `--tts-provider` | | 配置文件 | TTS 服务商 (`siliconflow`/`openai`) |
+| `--tts-voice` | | 配置文件 | TTS 发音人 |
 | `--verbose` | `-v` | `false` | 显示详细信息 |
 
 ### `version` — 版本信息
@@ -153,16 +183,21 @@ mini-tmk-agent version
 | `TMK_TRANS_PROVIDER` | 翻译服务商 |
 | `TMK_TRANS_BASE_URL` | 自定义翻译 API 地址 |
 | `TMK_TRANS_MODEL` | 自定义翻译模型 |
+| `TMK_TTS_ENABLED` | 启用 TTS 语音合成 (`true`/`false`) |
+| `TMK_TTS_PROVIDER` | TTS 服务商 (`siliconflow`/`openai`) |
+| `TMK_TTS_API_KEY` | TTS 服务 API Key（可与 ASR/翻译共用） |
+| `TMK_TTS_MODEL` | 自定义 TTS 模型 |
+| `TMK_TTS_VOICE` | TTS 发音人 |
 
 ### Provider 预设
 
 指定 `--asr-provider groq` 即自动使用对应的 Base URL 和 Model。
 
-| Provider | ASR Model | 翻译 Model | 特点 |
-|----------|-----------|-----------|------|
-| `groq` | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` | 速度极快 |
-| `siliconflow` | `FunAudioLLM/SenseVoiceSmall` | `Qwen/Qwen3-8B` | 中文好，免费 |
-| `openai` | `whisper-1` | `gpt-4o-mini` | 质量最高 |
+| Provider | ASR Model | 翻译 Model | TTS Model | 特点 |
+|----------|-----------|-----------|-----------|------|
+| `groq` | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` | — | 速度极快 |
+| `siliconflow` | `FunAudioLLM/SenseVoiceSmall` | `Qwen/Qwen3-8B` | `CosyVoice2-0.5B` | 中文好，免费 |
+| `openai` | `whisper-1` | `gpt-4o-mini` | `tts-1` | 质量最高 |
 
 三个 Provider 均兼容 OpenAI API 格式，改 Key 和 Provider 名即可切换。
 
@@ -183,8 +218,8 @@ mini-tmk-agent version
 ### 流式管道
 
 ```
-麦克风 ──→ [audioChan] ──→ VAD 切句 ──→ [speechChan] ──→ ASR ──→ [textChan] ──→ 翻译(SSE) ──→ 控制台
- 采集        chan []byte    VAD          chan []byte     HTTP      chan *Result    SSE 流式     Output
+麦克风 ──→ [audioChan] ──→ VAD 切句 ──→ [speechChan] ──→ ASR ──→ [textChan] ──→ 翻译(SSE) ──→ Output
+ 采集        chan []byte    VAD          chan []byte     HTTP      chan *Result    SSE 流式     Console/TTS
  goroutine                goroutine                   goroutine                 goroutine
 ```
 
@@ -241,10 +276,11 @@ Mini_TMK_Agent/
 ├── internal/
 │   ├── asr/                     # ASR 接口 + Whisper HTTP 实现
 │   ├── translate/               # 翻译接口 + LLM SSE 流式翻译
+│   ├── tts/                     # TTS 接口 + OpenAI 兼容实现
 │   ├── audio/                   # 麦克风采集、文件读取、重采样、VAD
 │   ├── pipeline/                # 流式管道 + 文件管道
 │   ├── config/                  # 配置加载 + .env 支持
-│   └── output/                  # 控制台彩色输出
+│   └── output/                  # 控制台输出 + TTS 装饰器
 ├── go.mod / go.sum
 ├── Makefile
 ├── .env.example
@@ -275,9 +311,11 @@ go vet ./...
 1. ASR：在 `internal/asr/` 实现 `Provider` 接口，在 `config.go` 的 `ProviderDefaults` 中添加预设
 2. 翻译：在 `internal/translate/` 实现 `Provider` 接口，在 `TransDefaults` 中添加预设
 
-### 添加新输出方式（TTS / WebUI）
+### 添加新 Provider
 
-实现 `output.Output` 接口，在 CLI 入口替换 `output.NewConsoleOutput()` 即可。
+1. ASR：在 `internal/asr/` 实现 `Provider` 接口，在 `config.go` 的 `ProviderDefaults` 中添加预设
+2. 翻译：在 `internal/translate/` 实现 `Provider` 接口，在 `TransDefaults` 中添加预设
+3. TTS：在 `internal/tts/` 实现 `Provider` 接口，在 `TTSDefaults` 中添加预设，在 `NewProvider` 工厂函数中注册
 
 ---
 

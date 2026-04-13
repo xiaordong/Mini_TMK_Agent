@@ -31,6 +31,14 @@ type Config struct {
 	TransAPIKey   string `mapstructure:"trans_api_key"`
 	TransModel    string `mapstructure:"trans_model"`
 
+	// TTS 配置
+	TTSEnabled  bool   `mapstructure:"tts_enabled"`
+	TTSProvider string `mapstructure:"tts_provider"`
+	TTSBaseURL  string `mapstructure:"tts_base_url"`
+	TTSAPIKey   string `mapstructure:"tts_api_key"`
+	TTSModel    string `mapstructure:"tts_model"`
+	TTSVoice    string `mapstructure:"tts_voice"`
+
 	// 运行时参数
 	SourceLang string
 	TargetLang string
@@ -69,6 +77,24 @@ var TransDefaults = map[string]ProviderPreset{
 	},
 }
 
+// TTSDefaults TTS provider 预设配置
+var TTSDefaults = map[string]ProviderPreset{
+	"siliconflow": {
+		BaseURL: "https://api.siliconflow.cn/v1",
+		Model:   "FunAudioLLM/CosyVoice2-0.5B",
+	},
+	"openai": {
+		BaseURL: "https://api.openai.com/v1",
+		Model:   "tts-1",
+	},
+}
+
+// TTSVoiceDefaults TTS provider 默认发音人
+var TTSVoiceDefaults = map[string]string{
+	"siliconflow": "FunAudioLLM/CosyVoice2-0.5B:alex",
+	"openai":      "alloy",
+}
+
 // Load 加载配置，优先级：flags > 环境变量 > .env 文件 > 配置文件 > 默认值
 func Load() (*Config, error) {
 	// 先加载 .env 文件到环境变量（不覆盖已有的）
@@ -97,6 +123,12 @@ func Load() (*Config, error) {
 		TransBaseURL:  viper.GetString("trans_base_url"),
 		TransAPIKey:   viper.GetString("trans_api_key"),
 		TransModel:    viper.GetString("trans_model"),
+		TTSEnabled:    viper.GetBool("tts_enabled"),
+		TTSProvider:   strings.ToLower(viper.GetString("tts_provider")),
+		TTSBaseURL:    viper.GetString("tts_base_url"),
+		TTSAPIKey:     viper.GetString("tts_api_key"),
+		TTSModel:      viper.GetString("tts_model"),
+		TTSVoice:      viper.GetString("tts_voice"),
 	}
 
 	// 应用 ASR provider 预设
@@ -126,6 +158,26 @@ func Load() (*Config, error) {
 			if cfg.TransModel == "" {
 				cfg.TransModel = p.Model
 			}
+		}
+	}
+
+	// 应用 TTS provider 预设（仅在 TTS 启用时）
+	if cfg.TTSEnabled {
+		if cfg.TTSProvider == "" {
+			cfg.TTSProvider = "siliconflow"
+		}
+		if cfg.TTSBaseURL == "" || cfg.TTSModel == "" {
+			if p, ok := TTSDefaults[cfg.TTSProvider]; ok {
+				if cfg.TTSBaseURL == "" {
+					cfg.TTSBaseURL = p.BaseURL
+				}
+				if cfg.TTSModel == "" {
+					cfg.TTSModel = p.Model
+				}
+			}
+		}
+		if cfg.TTSVoice == "" {
+			cfg.TTSVoice = TTSVoiceDefaults[cfg.TTSProvider]
 		}
 	}
 
