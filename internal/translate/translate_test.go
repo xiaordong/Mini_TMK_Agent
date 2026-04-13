@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLLMProvider_Translate(t *testing.T) {
@@ -49,9 +50,10 @@ func TestLLMProvider_Translate(t *testing.T) {
 	defer server.Close()
 
 	provider := &llmProvider{
-		baseURL: server.URL,
-		apiKey:  "fake-key",
-		model:   "test-model",
+		baseURL:    server.URL,
+		apiKey:     "fake-key",
+		model:      "test-model",
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 
 	var collected strings.Builder
@@ -86,9 +88,10 @@ func TestLLMProvider_TranslateSync(t *testing.T) {
 	defer server.Close()
 
 	provider := &llmProvider{
-		baseURL: server.URL,
-		apiKey:  "fake-key",
-		model:   "test",
+		baseURL:    server.URL,
+		apiKey:     "fake-key",
+		model:      "test",
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 
 	result, err := provider.TranslateSync(context.Background(), "你好", "zh", "fr")
@@ -108,9 +111,10 @@ func TestLLMProvider_Translate_Error(t *testing.T) {
 	defer server.Close()
 
 	provider := &llmProvider{
-		baseURL: server.URL,
-		apiKey:  "fake-key",
-		model:   "test",
+		baseURL:    server.URL,
+		apiKey:     "fake-key",
+		model:      "test",
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 
 	err := provider.Translate(context.Background(), "test", "en", "zh", func(string) {})

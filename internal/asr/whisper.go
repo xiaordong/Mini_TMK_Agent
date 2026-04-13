@@ -8,13 +8,15 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 )
 
 // whisperProvider 兼容 OpenAI Whisper API 的 HTTP 实现
 type whisperProvider struct {
-	baseURL string
-	apiKey  string
-	model   string
+	baseURL    string
+	apiKey     string
+	model      string
+	httpClient *http.Client
 }
 
 // whisperResponse OpenAI transcription API 响应格式
@@ -63,7 +65,7 @@ func (p *whisperProvider) Transcribe(ctx context.Context, audioData []byte, lang
 	}
 
 	// 构建请求
-	url := p.baseURL + "/audio/transcriptions"
+	url := strings.TrimRight(p.baseURL, "/") + "/audio/transcriptions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
@@ -72,7 +74,7 @@ func (p *whisperProvider) Transcribe(ctx context.Context, audioData []byte, lang
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 
 	// 发送请求
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("发送 ASR 请求失败: %w", err)
 	}

@@ -52,25 +52,18 @@ func (p *StreamPipeline) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	wg.Add(4)
 
-	// goroutine 1: 麦克风采集 → audioChan
 	go func() {
 		defer wg.Done()
 		p.captureLoop(ctx, audioChan)
 	}()
-
-	// goroutine 2: VAD 切句 → speechChan
 	go func() {
 		defer wg.Done()
 		p.vadLoop(ctx, audioChan, speechChan)
 	}()
-
-	// goroutine 3: ASR 识别 → textChan
 	go func() {
 		defer wg.Done()
 		p.asrLoop(ctx, speechChan, textChan)
 	}()
-
-	// goroutine 4: 翻译 → 输出
 	go func() {
 		defer wg.Done()
 		p.translateLoop(ctx, textChan)
@@ -78,8 +71,10 @@ func (p *StreamPipeline) Run(ctx context.Context) error {
 
 	p.out.OnInfo("同声传译已启动，请开始说话...")
 
-	// 等待上下文取消
 	<-ctx.Done()
+	p.out.OnInfo("正在停止...")
+
+	// 先停止采集（停止后回调不会再触发），再关闭 channel
 	p.capturer.Stop()
 	close(audioChan)
 	wg.Wait()
@@ -93,34 +88,60 @@ func (p *StreamPipeline) captureLoop(ctx context.Context, audioChan chan<- []byt
 		select {
 		case audioChan <- data:
 		case <-ctx.Done():
+			// ctx 取消后不再发送，避免向已关闭 channel 写入
 		}
 	})
 	if err != nil {
 		p.out.OnError(fmt.Sprintf("麦克风启动失败: %v", err))
 		return
 	}
+	// Start 返回说明采集已结束，此时安全关闭 channel
+	// 但由 Run() 负责关闭，这里不需要关
 }
 
 // vadLoop VAD 切句循环
 func (p *StreamPipeline) vadLoop(ctx context.Context, audioChan <-chan []byte, speechChan chan<- []byte) {
-	vad := audio.NewVAD(200, 1200) // 200ms 帧，1.2s 静音判定
+	vad := audio.NewVAD(200, 1200)
+	frameSize := vad.FrameSize()
 	defer close(speechChan)
 
-	for frame := range audioChan {
-		// VAD 需要固定帧大小
-		frameSize := vad.FrameSize()
-		if len(frame) < frameSize {
-			continue
-		}
+	// 累积缓冲区：malgo 每次回调长度不固定，需要攒够 frameSize 再处理
+	var buf []byte
 
-		// 处理整帧
-		sentence, complete := vad.Process(frame[:frameSize])
-		if complete && len(sentence) > 0 {
+	for frame := range audioChan {
+		buf = append(buf, frame...)
+
+		// 逐帧处理缓冲区数据
+		for len(buf) >= frameSize {
+			sentence, complete := vad.Process(buf[:frameSize])
+			buf = buf[frameSize:]
+
+			if complete && len(sentence) > 0 {
+				select {
+				case speechChan <- sentence:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}
+
+	// 处理残余数据
+	if len(buf) > 0 {
+		// 填充到 frameSize 再处理
+		padded := make([]byte, frameSize)
+		copy(padded, buf)
+		if sentence, complete := vad.Process(padded); complete && len(sentence) > 0 {
 			select {
 			case speechChan <- sentence:
-			case <-ctx.Done():
-				return
+			default:
 			}
+		}
+	}
+	if remaining := vad.Flush(); len(remaining) > 0 {
+		select {
+		case speechChan <- remaining:
+		default:
 		}
 	}
 }
@@ -152,10 +173,16 @@ func (p *StreamPipeline) translateLoop(ctx context.Context, textChan <-chan *asr
 	for result := range textChan {
 		p.out.OnSourceText(result.Text)
 
-		err := p.transProvider.Translate(ctx, result.Text, result.Language, p.targetLang, func(chunk string) {
+		// 优先使用 ASR 检测到的语言，若为空则用用户指定的源语言
+		srcLang := result.Language
+		if srcLang == "" || srcLang == "auto" {
+			srcLang = p.sourceLang
+		}
+
+		err := p.transProvider.Translate(ctx, result.Text, srcLang, p.targetLang, func(chunk string) {
 			p.out.OnTranslatedText(chunk)
 		})
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			p.out.OnError(fmt.Sprintf("翻译失败: %v", err))
 			continue
 		}

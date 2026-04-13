@@ -13,9 +13,10 @@ import (
 
 // llmProvider 通过 LLM SSE 流式 API 实现翻译
 type llmProvider struct {
-	baseURL string
-	apiKey  string
-	model   string
+	baseURL    string
+	apiKey     string
+	model      string
+	httpClient *http.Client
 }
 
 // chatRequest OpenAI chat completions 请求格式
@@ -87,7 +88,7 @@ func (p *llmProvider) Translate(ctx context.Context, text, srcLang, tgtLang stri
 		return fmt.Errorf("序列化请求失败: %w", err)
 	}
 
-	url := p.baseURL + "/chat/completions"
+	url := strings.TrimRight(p.baseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("创建请求失败: %w", err)
@@ -95,7 +96,7 @@ func (p *llmProvider) Translate(ctx context.Context, text, srcLang, tgtLang stri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("翻译请求失败: %w", err)
 	}

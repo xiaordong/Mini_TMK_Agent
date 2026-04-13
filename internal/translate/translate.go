@@ -1,7 +1,11 @@
 // Package translate 提供翻译抽象接口和工厂方法
 package translate
 
-import "context"
+import (
+	"context"
+	"net/http"
+	"time"
+)
 
 // Provider 翻译服务接口
 type Provider interface {
@@ -18,5 +22,8 @@ func NewProvider(baseURL, apiKey, model string) Provider {
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		model:   model,
+		httpClient: &http.Client{
+			Timeout: 120 * time.Second,
+		},
 	}
 }

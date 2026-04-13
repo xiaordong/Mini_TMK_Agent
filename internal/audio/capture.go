@@ -50,14 +50,17 @@ func (c *MalgoCapturer) Start(onData func([]byte)) error {
 		Data: onRecv,
 	})
 	if err != nil {
-		ctx.Free()
+		c.ctx.Free()
+		c.ctx = nil
 		return fmt.Errorf("初始化采集设备失败: %w", err)
 	}
 	c.device = device
 
 	if err := device.Start(); err != nil {
-		device.Uninit()
-		ctx.Free()
+		c.device.Uninit()
+		c.device = nil
+		c.ctx.Free()
+		c.ctx = nil
 		return fmt.Errorf("启动采集设备失败: %w", err)
 	}
 

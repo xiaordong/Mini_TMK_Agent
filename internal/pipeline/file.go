@@ -89,7 +89,13 @@ func (p *FilePipeline) Run(ctx context.Context, filePath, outputPath string) err
 		}
 
 		wg.Add(1)
-		sem <- struct{}{} // 获取信号量
+		// 获取信号量，支持 ctx 取消
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Done()
+			break
+		}
 		go func(idx int, data []byte) {
 			defer wg.Done()
 			defer func() { <-sem }()

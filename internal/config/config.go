@@ -167,6 +167,12 @@ func loadEnvFile(path string) {
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
+		// 剥离首尾引号
+		if len(value) >= 2 {
+			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+				value = value[1 : len(value)-1]
+			}
+		}
 		// 不覆盖已有环境变量
 		if os.Getenv(key) == "" {
 			os.Setenv(key, value)

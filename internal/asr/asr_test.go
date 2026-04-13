@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPCMToWav(t *testing.T) {
@@ -86,9 +87,10 @@ func TestWhisperProvider_Transcribe(t *testing.T) {
 	defer server.Close()
 
 	provider := &whisperProvider{
-		baseURL: server.URL,
-		apiKey:  "fake-key",
-		model:   "whisper-large-v3-turbo",
+		baseURL:    server.URL,
+		apiKey:     "fake-key",
+		model:      "whisper-large-v3-turbo",
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 
 	result, err := provider.Transcribe(context.Background(), make([]byte, 32000), "zh")
@@ -115,9 +117,10 @@ func TestWhisperProvider_Transcribe_Error(t *testing.T) {
 	defer server.Close()
 
 	provider := &whisperProvider{
-		baseURL: server.URL,
-		apiKey:  "bad-key",
-		model:   "test",
+		baseURL:    server.URL,
+		apiKey:     "bad-key",
+		model:      "test",
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 
 	_, err := provider.Transcribe(context.Background(), make([]byte, 100), "en")

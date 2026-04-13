@@ -1,7 +1,11 @@
 // Package asr 提供语音识别（ASR）抽象接口和工厂方法
 package asr
 
-import "context"
+import (
+	"context"
+	"net/http"
+	"time"
+)
 
 // Result ASR 识别结果
 type Result struct {
@@ -24,5 +28,8 @@ func NewProvider(baseURL, apiKey, model string) Provider {
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		model:   model,
+		httpClient: &http.Client{
+			Timeout: 60 * time.Second,
+		},
 	}
 }
