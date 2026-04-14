@@ -1,10 +1,15 @@
 package web
 
 import (
+	"context"
 	"embed"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 
 	"Mini_TMK_Agent/internal/config"
 
@@ -31,7 +36,7 @@ func NewServer(cfg *config.Config) *Server {
 	}
 }
 
-// Start 启动 Web 服务器
+// Start 启动 Web 服务器（支持优雅关闭）
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
 
@@ -47,7 +52,23 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/ws/stream", s.handleStream)
 	mux.HandleFunc("/ws/transcript", s.handleWsTranscript)
 
-	return http.ListenAndServe(addr, mux)
+	srv := &http.Server{Addr: addr, Handler: mux}
+
+	// 信号监听
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		fmt.Println("\n正在关闭 Web 服务器...")
+		srv.Shutdown(context.Background())
+	}()
+
+	fmt.Printf("Web UI 启动在 http://localhost%s\n", addr)
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 // handleConfig 路由 GET/PUT 到对应 handler

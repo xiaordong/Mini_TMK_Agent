@@ -300,7 +300,10 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := s.cfg
+	s.mu.Lock()
+	cfg := *s.cfg // 值拷贝，避免持有锁期间被修改
+	s.mu.Unlock()
+
 	writeJSON(w, http.StatusOK, configResponse{
 		ASRProvider:   cfg.ASRProvider,
 		ASRBaseURL:    cfg.ASRBaseURL,

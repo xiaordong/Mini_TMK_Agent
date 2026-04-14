@@ -249,7 +249,19 @@ func runTranscript(cmd *cobra.Command, args []string) error {
 		TargetLang:    targetLang,
 	})
 
-	err = pipe.Run(context.Background(), filePath, outputPath)
+	// 信号处理
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		out.OnInfo("正在停止...")
+		cancel()
+	}()
+
+	err = pipe.Run(ctx, filePath, outputPath)
 	// 文件转录结束后保存 TTS 音频
 	if ttsOut != nil {
 		if flushErr := ttsOut.Flush(); flushErr != nil {
@@ -269,6 +281,5 @@ func runWeb(cmd *cobra.Command, args []string) error {
 
 	srv := web.NewServer(cfg)
 	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("Web UI 启动在 http://localhost%s\n", addr)
 	return srv.Start(addr)
 }

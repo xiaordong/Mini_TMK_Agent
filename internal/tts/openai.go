@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -28,12 +29,19 @@ type ttsRequest struct {
 	ResponseFormat string `json:"response_format"`
 }
 
+// newOpenAIProvider 创建 OpenAI 兼容 TTS 提供者
+func newOpenAIProvider(baseURL, apiKey, model, voice string) *openaiProvider {
+	return &openaiProvider{
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		apiKey:     apiKey,
+		model:      model,
+		voice:      voice,
+		httpClient: &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
 // Synthesize 调用 OpenAI 兼容 TTS API 合成语音
 func (p *openaiProvider) Synthesize(ctx context.Context, text, lang string) ([]byte, error) {
-	if p.httpClient == nil {
-		p.httpClient = &http.Client{Timeout: 60 * time.Second}
-	}
-
 	reqBody := ttsRequest{
 		Model:          p.model,
 		Input:          text,
@@ -46,7 +54,7 @@ func (p *openaiProvider) Synthesize(ctx context.Context, text, lang string) ([]b
 		return nil, fmt.Errorf("序列化 TTS 请求失败: %w", err)
 	}
 
-	url := p.baseURL + "/audio/speech"
+	url := p.baseURL + "/audio/speech" // baseURL 已在构造时 TrimRight
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("创建 TTS 请求失败: %w", err)

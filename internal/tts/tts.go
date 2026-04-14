@@ -20,12 +20,7 @@ func NewProvider(provider, baseURL, apiKey, model, voice string) (Provider, erro
 		if baseURL == "" || apiKey == "" {
 			return nil, fmt.Errorf("TTS provider %s 需要 baseURL 和 apiKey", provider)
 		}
-		return &openaiProvider{
-			baseURL: baseURL,
-			apiKey:  apiKey,
-			model:   model,
-			voice:   voice,
-		}, nil
+		return newOpenAIProvider(baseURL, apiKey, model, voice), nil
 	default:
 		return nil, fmt.Errorf("不支持的 TTS provider: %s（可选: siliconflow, openai）", provider)
 	}
