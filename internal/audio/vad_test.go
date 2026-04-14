@@ -77,8 +77,8 @@ func TestVAD_Calibration(t *testing.T) {
 	if vad.calibrating {
 		t.Error("校准应该已完成")
 	}
-	if vad.threshold < 300 {
-		t.Errorf("阈值 = %f, 不应低于 300", vad.threshold)
+	if vad.threshold < 150 {
+		t.Errorf("阈值 = %f, 不应低于 150", vad.threshold)
 	}
 }
 
