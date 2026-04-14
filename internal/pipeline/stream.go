@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 
 	"Mini_TMK_Agent/internal/asr"
@@ -102,8 +103,11 @@ func (p *StreamPipeline) captureLoop(ctx context.Context, audioChan chan<- []byt
 // vadLoop VAD 切句循环
 func (p *StreamPipeline) vadLoop(ctx context.Context, audioChan <-chan []byte, speechChan chan<- []byte) {
 	vad := audio.NewVAD(200, 1200)
-	frameSize := vad.FrameSize()
+	defer vad.Destroy()
 	defer close(speechChan)
+
+	frameSize := vad.FrameSize()
+	log.Printf("[VAD] 模式: %s", vad.VADMode())
 
 	// 累积缓冲区：malgo 每次回调长度不固定，需要攒够 frameSize 再处理
 	var buf []byte
@@ -128,7 +132,6 @@ func (p *StreamPipeline) vadLoop(ctx context.Context, audioChan <-chan []byte, s
 
 	// 处理残余数据
 	if len(buf) > 0 {
-		// 填充到 frameSize 再处理
 		padded := make([]byte, frameSize)
 		copy(padded, buf)
 		if sentence, complete := vad.Process(padded); complete && len(sentence) > 0 {

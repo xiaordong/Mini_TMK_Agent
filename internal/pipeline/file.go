@@ -90,14 +90,13 @@ func (p *FilePipeline) Run(ctx context.Context, filePath, outputPath string) err
 			continue
 		}
 
-		wg.Add(1)
-		// 获取信号量，支持 ctx 取消
-		select {
-		case sem <- struct{}{}:
-		case <-ctx.Done():
-			wg.Done()
+		// 检查 context 取消
+		if ctx.Err() != nil {
 			break
 		}
+
+		wg.Add(1)
+		sem <- struct{}{}
 		go func(idx int, data []byte) {
 			defer wg.Done()
 			defer func() { <-sem }()
@@ -178,6 +177,7 @@ func (p *FilePipeline) Run(ctx context.Context, filePath, outputPath string) err
 // segmentByVAD 用 VAD 按静音边界将 PCM 数据分段
 func (p *FilePipeline) segmentByVAD(pcmData []byte) [][]byte {
 	vad := audio.NewVAD(200, 800)
+	defer vad.Destroy()
 	vad.SetThreshold(300)
 	frameSize := vad.FrameSize()
 
