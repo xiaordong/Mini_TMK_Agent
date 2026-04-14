@@ -255,7 +255,7 @@ mini-tmk-agent version
 4 个 goroutine 通过 channel 串联，各司其职：
 
 1. **采集**：malgo 回调写入 `audioChan`，每帧 200ms
-2. **VAD**：能量检测状态机，自动校准底噪阈值，1.2s 静音判定句子结束
+2. **VAD**：Silero VAD 神经网络检测（优先），能量检测兜底，1.2s 静音判定句子结束
 3. **ASR**：将完整句子 PCM 包装为 WAV，multipart POST 到 Whisper API
 4. **翻译**：SSE 流式调用 Chat Completions，每收到 delta 即时输出
 
@@ -306,7 +306,7 @@ Mini_TMK_Agent/
 │   ├── asr/                     # ASR 接口 + Whisper HTTP 实现
 │   ├── translate/               # 翻译接口 + LLM SSE 流式翻译
 │   ├── tts/                     # TTS 接口 + OpenAI 兼容实现
-│   ├── audio/                   # 麦克风采集、文件读取、重采样、VAD
+│   ├── audio/                   # 麦克风采集、文件读取、重采样、VAD（Silero+能量兜底）
 │   ├── pipeline/                # 流式管道 + 文件管道
 │   ├── config/                  # 配置加载 + .env 支持
 │   ├── output/                  # 控制台输出 + TTS 装饰器
