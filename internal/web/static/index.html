@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mini TMK Agent</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部栏 -->
+    <header>
+      <div class="header-left">
+        <span class="logo">🎙</span>
+        <span class="title">Mini TMK Agent</span>
+      </div>
+      <div class="header-right">
+        <span id="status" class="status disconnected">● 未连接</span>
+        <button id="settingsBtn" class="icon-btn" title="设置">⚙</button>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <!-- 左侧面板 -->
+      <aside class="sidebar">
+        <!-- 模式切换 -->
+        <div class="section">
+          <div class="section-title">模式</div>
+          <div class="mode-switch">
+            <button class="mode-btn active" data-mode="file">文件</button>
+            <button class="mode-btn" data-mode="stream">实时</button>
+          </div>
+        </div>
+
+        <!-- 语言对 -->
+        <div class="section">
+          <div class="section-title">语言对</div>
+          <div class="form-group">
+            <label>源语言</label>
+            <select id="sourceLang">
+              <option value="auto">自动检测</option>
+              <option value="zh">中文</option>
+              <option value="en">英文</option>
+              <option value="es">西班牙文</option>
+              <option value="ja">日文</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>目标语言</label>
+            <select id="targetLang">
+              <option value="zh">中文</option>
+              <option value="en">英文</option>
+              <option value="es">西班牙文</option>
+              <option value="ja">日文</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Provider -->
+        <div class="section">
+          <div class="section-title">服务商</div>
+          <div class="form-group">
+            <label>ASR</label>
+            <select id="asrProvider">
+              <option value="">加载中...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>翻译</label>
+            <select id="transProvider">
+              <option value="">加载中...</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- TTS -->
+        <div class="section">
+          <div class="section-title">语音合成</div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="ttsEnabled"> 启用 TTS
+            </label>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 主内容区 -->
+      <main>
+        <!-- 文件模式 -->
+        <div id="fileMode" class="mode-content">
+          <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📁</div>
+            <p>拖拽音频文件到此处，或点击选择</p>
+            <p class="upload-hint">支持 WAV、MP3 格式</p>
+            <input type="file" id="fileInput" accept=".wav,.mp3,.pcm,.ogg,.flac" hidden>
+          </div>
+          <div id="fileProgress" class="progress-area hidden">
+            <div class="spinner"></div>
+            <span id="progressText">处理中...</span>
+            <div class="progress-bar-wrap">
+              <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <span id="progressPct" class="progress-pct"></span>
+          </div>
+          <div id="fileResults" class="results-area"></div>
+        </div>
+
+        <!-- 实时模式 -->
+        <div id="streamMode" class="mode-content hidden">
+          <div class="stream-controls">
+            <button id="streamStart" class="btn-primary">开始录音</button>
+            <button id="streamStop" class="btn-danger hidden">停止录音</button>
+          </div>
+          <div id="streamResults" class="results-area"></div>
+        </div>
+      </main>
+    </div>
+
+    <!-- 底部状态栏 -->
+    <footer>
+      <span id="footerStatus">就绪</span>
+    </footer>
+  </div>
+
+  <!-- 设置弹窗 -->
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>API 设置</h3>
+        <button class="modal-close" id="settingsClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>ASR API Key</label>
+          <input type="password" id="asrApiKey" placeholder="输入 ASR API Key">
+          <span class="key-status" id="asrKeyStatus"></span>
+        </div>
+        <div class="form-group">
+          <label>翻译 API Key</label>
+          <input type="password" id="transApiKey" placeholder="输入翻译 API Key">
+          <span class="key-status" id="transKeyStatus"></span>
+        </div>
+        <div class="form-group">
+          <label>TTS API Key</label>
+          <input type="password" id="ttsApiKey" placeholder="输入 TTS API Key">
+          <span class="key-status" id="ttsKeyStatus"></span>
+        </div>
+        <button id="saveSettings" class="btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

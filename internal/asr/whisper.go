@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // whisperProvider 兼容 OpenAI Whisper API 的 HTTP 实现
@@ -27,7 +28,37 @@ type whisperResponse struct {
 }
 
 func (p *whisperProvider) Transcribe(ctx context.Context, audioData []byte, lang string) (*Result, error) {
-	// PCM 转 WAV
+	// 网络请求最多重试 3 次
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+		}
+		result, err := p.doTranscribe(ctx, audioData, lang)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		// 只有网络/超时类错误才重试
+		if !isRetryable(err) {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+// isRetryable 判断是否为可重试的网络错误
+func isRetryable(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "deadline exceeded") ||
+		strings.Contains(msg, "wsarecv") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "refused")
+}
+
+func (p *whisperProvider) doTranscribe(ctx context.Context, audioData []byte, lang string) (*Result, error) {
 	wavData := pcmToWav(audioData)
 
 	// 构建 multipart form

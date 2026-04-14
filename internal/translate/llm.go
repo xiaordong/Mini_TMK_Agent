@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // llmProvider 通过 LLM SSE 流式 API 实现翻译
@@ -60,6 +61,36 @@ var langNames = map[string]string{
 }
 
 func (p *llmProvider) Translate(ctx context.Context, text, srcLang, tgtLang string, onChunk func(string)) error {
+	// 网络请求最多重试 3 次
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+		}
+		err := p.doTranslate(ctx, text, srcLang, tgtLang, onChunk)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !isRetryableTranslate(err) {
+			break
+		}
+	}
+	return lastErr
+}
+
+// isRetryableTranslate 判断翻译错误是否可重试
+func isRetryableTranslate(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "deadline exceeded") ||
+		strings.Contains(msg, "wsarecv") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "refused")
+}
+
+func (p *llmProvider) doTranslate(ctx context.Context, text, srcLang, tgtLang string, onChunk func(string)) error {
 	srcName := langNames[srcLang]
 	tgtName := langNames[tgtLang]
 	if srcName == "" {

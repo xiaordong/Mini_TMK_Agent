@@ -23,7 +23,7 @@ func NewProvider(baseURL, apiKey, model string) Provider {
 		apiKey:  apiKey,
 		model:   model,
 		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 300 * time.Second,
 		},
 	}
 }

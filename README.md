@@ -1,6 +1,6 @@
 # Mini TMK Agent
 
-同声传译 CLI 工具 — 麦克风实时翻译 & 音频文件转录，支持中/英/西/日四种语言互译。
+同声传译 Agent — 麦克风实时翻译 & 音频文件转录 & Web UI，支持中/英/西/日四种语言互译。
 
 ## 3 分钟快速上手
 
@@ -86,6 +86,25 @@ TMK_TTS_PROVIDER=siliconflow
 TMK_TTS_API_KEY=your-key
 ```
 
+### Web UI（浏览器可视化界面）
+
+```bash
+# 启动 Web 服务（默认端口 8080）
+./mini-tmk-agent web
+
+# 指定端口
+./mini-tmk-agent web -p 3000
+```
+
+浏览器打开 `http://localhost:8080`，支持：
+
+- **文件转录**：拖拽上传音频文件，流式显示转录+翻译结果，带进度条
+- **实时同传**：浏览器麦克风采集，WebSocket 实时传输 ASR+翻译结果
+- **TTS 播放**：开启后翻译结果带播放按钮，一键收听译文语音
+- **配置管理**：在线切换 Provider、语言对，设置 API Key
+
+技术栈：Go embed 嵌入前端 + gorilla/websocket，零额外构建工具链。
+
 ### 流式同传（需要麦克风 + GCC）
 
 ```bash
@@ -120,6 +139,16 @@ C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm mingw-w64-x86_64-gcc"
 ---
 
 ## 命令参考
+
+### `web` — Web UI 服务
+
+```bash
+mini-tmk-agent web [flags]
+```
+
+| Flag | 短 | 默认值 | 说明 |
+|------|----|--------|------|
+| `--port` | `-p` | `8080` | Web 服务端口 |
 
 ### `stream` — 流式同传
 
@@ -272,7 +301,7 @@ type Output interface {
 ```
 Mini_TMK_Agent/
 ├── cmd/mini-tmk-agent/
-│   └── main.go                  # CLI 入口
+│   └── main.go                  # CLI 入口（stream/transcript/web）
 ├── internal/
 │   ├── asr/                     # ASR 接口 + Whisper HTTP 实现
 │   ├── translate/               # 翻译接口 + LLM SSE 流式翻译
@@ -280,7 +309,14 @@ Mini_TMK_Agent/
 │   ├── audio/                   # 麦克风采集、文件读取、重采样、VAD
 │   ├── pipeline/                # 流式管道 + 文件管道
 │   ├── config/                  # 配置加载 + .env 支持
-│   └── output/                  # 控制台输出 + TTS 装饰器
+│   ├── output/                  # 控制台输出 + TTS 装饰器
+│   └── web/                     # Web UI（HTTP/WS 服务端 + 嵌入式前端）
+│       ├── server.go            #   路由 + go:embed 静态文件
+│       ├── handler.go           #   REST API + WebSocket 文件转录
+│       ├── ws_stream.go         #   WebSocket 实时同传
+│       ├── output.go            #   WebOutput + CollectorOutput
+│       ├── capturer.go          #   WebSocketCapturer（浏览器音频）
+│       └── static/              #   前端（暗色主题 SPA）
 ├── go.mod / go.sum
 ├── Makefile
 ├── .env.example
@@ -305,11 +341,6 @@ go build -tags nocgo -ldflags "-s -w" -o mini-tmk-agent ./cmd/mini-tmk-agent
 go fmt ./...
 go vet ./...
 ```
-
-### 添加新 Provider
-
-1. ASR：在 `internal/asr/` 实现 `Provider` 接口，在 `config.go` 的 `ProviderDefaults` 中添加预设
-2. 翻译：在 `internal/translate/` 实现 `Provider` 接口，在 `TransDefaults` 中添加预设
 
 ### 添加新 Provider
 

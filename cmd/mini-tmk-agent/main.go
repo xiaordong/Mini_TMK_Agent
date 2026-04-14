@@ -16,6 +16,7 @@ import (
 	"Mini_TMK_Agent/internal/pipeline"
 	"Mini_TMK_Agent/internal/translate"
 	"Mini_TMK_Agent/internal/tts"
+	"Mini_TMK_Agent/internal/web"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -93,6 +94,19 @@ func main() {
 	}
 
 	rootCmd.AddCommand(streamCmd, transcriptCmd, versionCmd)
+
+	// web 命令
+	webCmd := &cobra.Command{
+		Use:   "web",
+		Short: "启动 Web UI 服务",
+		Long:  "启动 Web 界面，支持文件转录和实时同传。",
+		Example: "  mini-tmk-agent web\n" +
+			"  mini-tmk-agent web -p 3000",
+		RunE: runWeb,
+	}
+	webCmd.Flags().IntP("port", "p", 8080, "Web 服务端口")
+
+	rootCmd.AddCommand(webCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -243,4 +257,18 @@ func runTranscript(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return err
+}
+
+func runWeb(cmd *cobra.Command, args []string) error {
+	port, _ := cmd.Flags().GetInt("port")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+
+	srv := web.NewServer(cfg)
+	addr := fmt.Sprintf(":%d", port)
+	fmt.Printf("Web UI 启动在 http://localhost%s\n", addr)
+	return srv.Start(addr)
 }

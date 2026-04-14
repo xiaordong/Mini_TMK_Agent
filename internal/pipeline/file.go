@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"Mini_TMK_Agent/internal/asr"
 	"Mini_TMK_Agent/internal/audio"
@@ -81,6 +82,7 @@ func (p *FilePipeline) Run(ctx context.Context, filePath, outputPath string) err
 	results := make([]segmentResult, total)
 	sem := make(chan struct{}, p.concurrency)
 	var wg sync.WaitGroup
+	var completed int64 // 原子计数：已完成段数
 
 	for i, seg := range segments {
 		if len(seg) < 3200 {
@@ -103,23 +105,25 @@ func (p *FilePipeline) Run(ctx context.Context, filePath, outputPath string) err
 			r := segmentResult{index: idx}
 
 			// ASR
-			p.out.OnInfo(fmt.Sprintf("转录第 %d/%d 段...", idx+1, total))
 			asrResult, err := p.asrProvider.Transcribe(ctx, data, p.sourceLang)
 			if err != nil {
 				r.asrErr = err
 				p.out.OnError(fmt.Sprintf("第 %d 段转录失败: %v", idx+1, err))
 				results[idx] = r
+				done := atomic.AddInt64(&completed, 1)
+				p.out.OnInfo(fmt.Sprintf("完成 %d/%d 段", done, total))
 				return
 			}
 			if asrResult.Text == "" {
 				results[idx] = r
+				done := atomic.AddInt64(&completed, 1)
+				p.out.OnInfo(fmt.Sprintf("完成 %d/%d 段", done, total))
 				return
 			}
 			r.text = asrResult.Text
 			r.lang = asrResult.Language
 
 			// 翻译
-			p.out.OnInfo(fmt.Sprintf("翻译第 %d/%d 段...", idx+1, total))
 			var transText strings.Builder
 			err = p.transProvider.Translate(ctx, asrResult.Text, asrResult.Language, p.targetLang, func(chunk string) {
 				transText.WriteString(chunk)
@@ -128,10 +132,14 @@ func (p *FilePipeline) Run(ctx context.Context, filePath, outputPath string) err
 				r.transErr = err
 				p.out.OnError(fmt.Sprintf("第 %d 段翻译失败: %v", idx+1, err))
 				results[idx] = r
+				done := atomic.AddInt64(&completed, 1)
+				p.out.OnInfo(fmt.Sprintf("完成 %d/%d 段", done, total))
 				return
 			}
 			r.trans = transText.String()
 			results[idx] = r
+			done := atomic.AddInt64(&completed, 1)
+			p.out.OnInfo(fmt.Sprintf("完成 %d/%d 段", done, total))
 		}(i, seg)
 	}
 
