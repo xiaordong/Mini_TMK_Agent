@@ -32,7 +32,11 @@ func (p *whisperProvider) Transcribe(ctx context.Context, audioData []byte, lang
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			select {
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
 		result, err := p.doTranscribe(ctx, audioData, lang)
 		if err == nil {
@@ -55,7 +59,9 @@ func isRetryable(err error) bool {
 		strings.Contains(msg, "wsarecv") ||
 		strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "EOF") ||
-		strings.Contains(msg, "refused")
+		strings.Contains(msg, "refused") ||
+		strings.Contains(msg, "HTTP 429") ||
+		strings.Contains(msg, "HTTP 5")
 }
 
 func (p *whisperProvider) doTranscribe(ctx context.Context, audioData []byte, lang string) (*Result, error) {

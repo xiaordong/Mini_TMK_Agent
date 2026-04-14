@@ -65,13 +65,33 @@ func (p *llmProvider) Translate(ctx context.Context, text, srcLang, tgtLang stri
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			select {
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
-		err := p.doTranslate(ctx, text, srcLang, tgtLang, onChunk)
+
+		// 使用缓冲收集本次结果，仅成功时才回调 onChunk
+		// 防止重试时 onChunk 被重复调用
+		var buf strings.Builder
+		chunkSent := false
+		err := p.doTranslate(ctx, text, srcLang, tgtLang, func(chunk string) {
+			buf.WriteString(chunk)
+			chunkSent = true
+		})
 		if err == nil {
+			// 成功：将缓冲内容一次性发送给用户
+			if result := buf.String(); result != "" {
+				onChunk(result)
+			}
 			return nil
 		}
 		lastErr = err
+		// 如果已经发送了部分数据，不再重试（避免重复）
+		if chunkSent {
+			return fmt.Errorf("翻译中途失败（已输出部分结果）: %w", err)
+		}
 		if !isRetryableTranslate(err) {
 			break
 		}
@@ -87,7 +107,9 @@ func isRetryableTranslate(err error) bool {
 		strings.Contains(msg, "wsarecv") ||
 		strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "EOF") ||
-		strings.Contains(msg, "refused")
+		strings.Contains(msg, "refused") ||
+		strings.Contains(msg, "HTTP 429") ||
+		strings.Contains(msg, "HTTP 5")
 }
 
 func (p *llmProvider) doTranslate(ctx context.Context, text, srcLang, tgtLang string, onChunk func(string)) error {
