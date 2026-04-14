@@ -8,6 +8,9 @@ import (
 	"github.com/gen2brain/malgo"
 )
 
+// IsCaptureAvailable 麦克风采集是否可用
+func IsCaptureAvailable() bool { return true }
+
 // Capturer 麦克风采集接口
 type Capturer interface {
 	Start(onData func([]byte)) error

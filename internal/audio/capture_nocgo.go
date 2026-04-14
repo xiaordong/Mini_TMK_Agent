@@ -4,6 +4,9 @@ package audio
 
 import "fmt"
 
+// IsCaptureAvailable 麦克风采集是否可用
+func IsCaptureAvailable() bool { return false }
+
 // Capturer 麦克风采集接口
 type Capturer interface {
 	Start(onData func([]byte)) error

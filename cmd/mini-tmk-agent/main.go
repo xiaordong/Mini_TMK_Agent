@@ -25,64 +25,76 @@ import (
 var (
 	Version = "dev"
 
-	sourceLang    string
-	targetLang    string
-	asrProvider   string
-	transProvider string
-	ttsEnabled    bool
-	ttsProvider   string
-	ttsVoice      string
-	verbose       bool
+	// 全局 flags
+	providerFlag string
+	sourceLang   string
+	targetLang   string
+	verbose      bool
+
+	// hidden flags（向后兼容）
+	asrProviderLegacy   string
+	transProviderLegacy string
+	ttsProviderLegacy   string
+	ttsVoiceLegacy      string
 )
 
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "mini-tmk-agent",
 		Short: "同声传译 Agent - 实时麦克风翻译和音频文件转录",
-		Long:  "Mini TMK Agent 是一个同声传译 CLI 工具，支持实时麦克风流式翻译和音频文件转录。\n支持中文、英文、西班牙文、日文四种语言的互译。",
 	}
 
-	rootCmd.PersistentFlags().StringVar(&asrProvider, "asr-provider", "", "ASR 服务商 (groq|siliconflow|openai)")
-	rootCmd.PersistentFlags().StringVar(&transProvider, "trans-provider", "", "翻译服务商 (groq|siliconflow|openai)")
-	rootCmd.PersistentFlags().BoolVar(&ttsEnabled, "tts", false, "启用 TTS 语音合成输出")
-	rootCmd.PersistentFlags().StringVar(&ttsProvider, "tts-provider", "", "TTS 服务商 (siliconflow|openai)")
-	rootCmd.PersistentFlags().StringVar(&ttsVoice, "tts-voice", "", "TTS 发音人")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "显示原文和详细信息")
+	// 全局 flags（4 个）
+	rootCmd.PersistentFlags().StringVar(&providerFlag, "provider", "", "统一服务商 (groq|siliconflow|openai)")
+	rootCmd.PersistentFlags().StringVarP(&sourceLang, "source", "s", "auto", "源语言 (auto|zh|en|es|ja)")
+	rootCmd.PersistentFlags().StringVarP(&targetLang, "target", "t", "zh", "目标语言 (zh|en|es|ja)")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "显示原文")
 
-	// 将 flags 绑定到 viper
+	// Hidden flags（向后兼容）
+	rootCmd.PersistentFlags().StringVar(&asrProviderLegacy, "asr-provider", "", "")
+	rootCmd.PersistentFlags().StringVar(&transProviderLegacy, "trans-provider", "", "")
+	rootCmd.PersistentFlags().StringVar(&ttsProviderLegacy, "tts-provider", "", "")
+	rootCmd.PersistentFlags().StringVar(&ttsVoiceLegacy, "tts-voice", "", "")
+	rootCmd.PersistentFlags().MarkHidden("asr-provider")
+	rootCmd.PersistentFlags().MarkHidden("trans-provider")
+	rootCmd.PersistentFlags().MarkHidden("tts-provider")
+	rootCmd.PersistentFlags().MarkHidden("tts-voice")
+
+	// 绑定到 viper
+	viper.BindPFlag("provider", rootCmd.PersistentFlags().Lookup("provider"))
 	viper.BindPFlag("asr_provider", rootCmd.PersistentFlags().Lookup("asr-provider"))
 	viper.BindPFlag("trans_provider", rootCmd.PersistentFlags().Lookup("trans-provider"))
-	viper.BindPFlag("tts_enabled", rootCmd.PersistentFlags().Lookup("tts"))
 	viper.BindPFlag("tts_provider", rootCmd.PersistentFlags().Lookup("tts-provider"))
 	viper.BindPFlag("tts_voice", rootCmd.PersistentFlags().Lookup("tts-voice"))
 
 	// stream 命令
 	streamCmd := &cobra.Command{
 		Use:   "stream",
-		Short: "启动流式同传模式",
-		Long:  "通过麦克风实时采集音频，进行语音识别和翻译。",
-		Example: "  mini-tmk-agent stream --source-lang zh --target-lang en\n" +
-			"  mini-tmk-agent stream -s en -t zh --asr-provider groq --trans-provider siliconflow",
+		Short: "实时麦克风同传",
+		Example: "  mini-tmk-agent stream -s zh -t en\n" +
+			"  mini-tmk-agent stream --provider groq",
 		RunE: runStream,
 	}
-	streamCmd.Flags().StringVarP(&sourceLang, "source-lang", "s", "auto", "源语言 (auto|zh|en|es|ja)")
-	streamCmd.Flags().StringVarP(&targetLang, "target-lang", "t", "zh", "目标语言 (zh|en|es|ja)")
 
-	// transcript 命令
+	// transcript 命令（位置参数）
 	transcriptCmd := &cobra.Command{
-		Use:   "transcript",
+		Use:   "transcript <file> [output]",
 		Short: "音频文件转录",
-		Long:  "读取音频文件，进行语音识别和翻译，输出到文件。",
-		Example: "  mini-tmk-agent transcript --file input.mp3 --output output.txt\n" +
-			"  mini-tmk-agent transcript --file audio.wav -s en -t zh",
+		Example: "  mini-tmk-agent transcript input.wav\n" +
+			"  mini-tmk-agent transcript audio.mp3 output.txt -s en -t zh",
+		Args: cobra.RangeArgs(1, 2),
 		RunE: runTranscript,
 	}
-	transcriptCmd.Flags().StringVarP(&sourceLang, "source-lang", "s", "auto", "源语言 (auto|zh|en|es|ja)")
-	transcriptCmd.Flags().StringVarP(&targetLang, "target-lang", "t", "zh", "目标语言 (zh|en|es|ja)")
-	transcriptCmd.Flags().String("file", "", "输入音频文件路径 (wav/mp3/pcm)")
-	transcriptCmd.Flags().String("output", "", "输出文件路径")
 
-	_ = transcriptCmd.MarkFlagRequired("file")
+	// web 命令
+	webCmd := &cobra.Command{
+		Use:   "web",
+		Short: "启动 Web UI 服务",
+		Example: "  mini-tmk-agent web\n" +
+			"  mini-tmk-agent web -p 3000",
+		RunE: runWeb,
+	}
+	webCmd.Flags().IntP("port", "p", 8080, "Web 服务端口")
 
 	// version 命令
 	versionCmd := &cobra.Command{
@@ -93,20 +105,37 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(streamCmd, transcriptCmd, versionCmd)
-
-	// web 命令
-	webCmd := &cobra.Command{
-		Use:   "web",
-		Short: "启动 Web UI 服务",
-		Long:  "启动 Web 界面，支持文件转录和实时同传。",
-		Example: "  mini-tmk-agent web\n" +
-			"  mini-tmk-agent web -p 3000",
-		RunE: runWeb,
+	// config 子命令
+	configCmd := &cobra.Command{
+		Use:   "config",
+		Short: "管理配置",
 	}
-	webCmd.Flags().IntP("port", "p", 8080, "Web 服务端口")
 
-	rootCmd.AddCommand(webCmd)
+	configShowCmd := &cobra.Command{
+		Use:   "show",
+		Short: "显示当前配置",
+		RunE:  runConfigShow,
+	}
+
+	configSetCmd := &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "设置配置项",
+		Example: "  mini-tmk-agent config set provider siliconflow\n" +
+			"  mini-tmk-agent config set api-key sk-xxx\n" +
+			"  mini-tmk-agent config set tts true\n" +
+			"  mini-tmk-agent config set tts-voice alex",
+		Args: cobra.ExactArgs(2),
+		RunE: runConfigSet,
+	}
+
+	configCheckCmd := &cobra.Command{
+		Use:   "check",
+		Short: "检查配置和运行环境",
+		RunE:  runConfigCheck,
+	}
+
+	configCmd.AddCommand(configShowCmd, configSetCmd, configCheckCmd)
+	rootCmd.AddCommand(streamCmd, transcriptCmd, webCmd, configCmd, versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -119,37 +148,33 @@ func loadConfig() (*config.Config, error) {
 		return nil, err
 	}
 
-	// 命令行 flags 覆盖配置
-	if asrProvider != "" {
-		cfg.ASRProvider = strings.ToLower(asrProvider)
-		// 重新应用预设
+	// hidden flags 向后兼容覆盖
+	if asrProviderLegacy != "" {
+		cfg.ASRProvider = strings.ToLower(asrProviderLegacy)
 		if p, ok := config.ProviderDefaults[cfg.ASRProvider]; ok {
 			cfg.ASRBaseURL = p.BaseURL
 			cfg.ASRModel = p.Model
 		}
 	}
-	if transProvider != "" {
-		cfg.TransProvider = strings.ToLower(transProvider)
+	if transProviderLegacy != "" {
+		cfg.TransProvider = strings.ToLower(transProviderLegacy)
 		if p, ok := config.TransDefaults[cfg.TransProvider]; ok {
 			cfg.TransBaseURL = p.BaseURL
 			cfg.TransModel = p.Model
 		}
 	}
-	if ttsEnabled {
-		cfg.TTSEnabled = true
-	}
-	if ttsProvider != "" {
-		cfg.TTSProvider = strings.ToLower(ttsProvider)
+	if ttsProviderLegacy != "" {
+		cfg.TTSProvider = strings.ToLower(ttsProviderLegacy)
 		if p, ok := config.TTSDefaults[cfg.TTSProvider]; ok {
 			cfg.TTSBaseURL = p.BaseURL
 			cfg.TTSModel = p.Model
 		}
 	}
-	if ttsVoice != "" {
-		cfg.TTSVoice = ttsVoice
+	if ttsVoiceLegacy != "" {
+		cfg.TTSVoice = ttsVoiceLegacy
 	}
-	cfg.Verbose = verbose
 
+	cfg.Verbose = verbose
 	return cfg, nil
 }
 
@@ -173,6 +198,11 @@ func wrapTTSOutput(cfg *config.Config, consoleOut *output.ConsoleOutput, outputP
 }
 
 func runStream(cmd *cobra.Command, args []string) error {
+	// 检查麦克风采集能力
+	if !audio.IsCaptureAvailable() {
+		return fmt.Errorf("麦克风采集需要 CGO 支持，请安装 GCC 并使用 make build-full 重新编译")
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -199,7 +229,6 @@ func runStream(cmd *cobra.Command, args []string) error {
 		TargetLang:    targetLang,
 	})
 
-	// 优雅退出
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -212,7 +241,6 @@ func runStream(cmd *cobra.Command, args []string) error {
 	}()
 
 	err = pipe.Run(ctx)
-	// 流模式结束后保存 TTS 音频
 	if ttsOut != nil {
 		if flushErr := ttsOut.Flush(); flushErr != nil {
 			out.OnError(fmt.Sprintf("TTS 输出失败: %v", flushErr))
@@ -229,8 +257,11 @@ func runTranscript(cmd *cobra.Command, args []string) error {
 	cfg.SourceLang = sourceLang
 	cfg.TargetLang = targetLang
 
-	filePath, _ := cmd.Flags().GetString("file")
-	outputPath, _ := cmd.Flags().GetString("output")
+	filePath := args[0]
+	var outputPath string
+	if len(args) > 1 {
+		outputPath = args[1]
+	}
 
 	consoleOut := output.NewConsoleOutput(cfg.Verbose)
 	out, ttsOut, err := wrapTTSOutput(cfg, consoleOut, outputPath)
@@ -249,7 +280,6 @@ func runTranscript(cmd *cobra.Command, args []string) error {
 		TargetLang:    targetLang,
 	})
 
-	// 信号处理
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -262,7 +292,6 @@ func runTranscript(cmd *cobra.Command, args []string) error {
 	}()
 
 	err = pipe.Run(ctx, filePath, outputPath)
-	// 文件转录结束后保存 TTS 音频
 	if ttsOut != nil {
 		if flushErr := ttsOut.Flush(); flushErr != nil {
 			out.OnError(fmt.Sprintf("TTS 输出失败: %v", flushErr))
@@ -282,4 +311,142 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	srv := web.NewServer(cfg)
 	addr := fmt.Sprintf(":%d", port)
 	return srv.Start(addr)
+}
+
+func runConfigShow(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		// 配置加载失败时仍显示部分信息
+		fmt.Printf("配置文件: %s\n", config.ConfigFilePath())
+		fmt.Printf("错误: %v\n", err)
+		return nil
+	}
+
+	fmt.Printf("配置文件: %s\n", config.ConfigFilePath())
+	fmt.Println()
+	fmt.Printf("服务商:     %s\n", cfg.Provider)
+	fmt.Printf("API Key:    %s\n", config.MaskKey(cfg.APIKey))
+	fmt.Println()
+	fmt.Printf("[ASR]\n")
+	fmt.Printf("  Provider: %s\n", cfg.ASRProvider)
+	fmt.Printf("  BaseURL:  %s\n", cfg.ASRBaseURL)
+	fmt.Printf("  Model:    %s\n", cfg.ASRModel)
+	fmt.Printf("  API Key:  %s\n", config.MaskKey(cfg.ASRAPIKey))
+	fmt.Println()
+	fmt.Printf("[翻译]\n")
+	fmt.Printf("  Provider: %s\n", cfg.TransProvider)
+	fmt.Printf("  BaseURL:  %s\n", cfg.TransBaseURL)
+	fmt.Printf("  Model:    %s\n", cfg.TransModel)
+	fmt.Printf("  API Key:  %s\n", config.MaskKey(cfg.TransAPIKey))
+	fmt.Println()
+	fmt.Printf("[TTS]\n")
+	fmt.Printf("  启用:     %v\n", cfg.TTSEnabled)
+	if cfg.TTSEnabled {
+		fmt.Printf("  Provider: %s\n", cfg.TTSProvider)
+		fmt.Printf("  BaseURL:  %s\n", cfg.TTSBaseURL)
+		fmt.Printf("  Model:    %s\n", cfg.TTSModel)
+		fmt.Printf("  Voice:    %s\n", cfg.TTSVoice)
+		fmt.Printf("  API Key:  %s\n", config.MaskKey(cfg.TTSAPIKey))
+	}
+
+	return nil
+}
+
+func runConfigSet(cmd *cobra.Command, args []string) error {
+	key := args[0]
+	value := args[1]
+
+	// 将用户友好的 key 映射到 viper key
+	keyMap := map[string]string{
+		"provider":  "provider",
+		"api-key":   "api_key",
+		"tts":       "tts_enabled",
+		"tts-voice": "tts_voice",
+	}
+
+	viperKey, ok := keyMap[key]
+	if !ok {
+		// 也支持直接使用 viper key
+		viperKey = key
+	}
+
+	// 特殊处理布尔值
+	if key == "tts" {
+		viper.Set(viperKey, value == "true")
+	} else {
+		viper.Set(viperKey, value)
+	}
+
+	if err := viper.WriteConfigAs(config.ConfigFilePath()); err != nil {
+		return fmt.Errorf("写入配置文件失败: %w", err)
+	}
+
+	fmt.Printf("已设置 %s = %s\n", key, value)
+	fmt.Printf("配置文件: %s\n", config.ConfigFilePath())
+	return nil
+}
+
+func runConfigCheck(cmd *cobra.Command, args []string) error {
+	fmt.Println("检查配置和运行环境...")
+	fmt.Println()
+
+	// 检查配置文件
+	configPath := config.ConfigFilePath()
+	if _, err := os.Stat(configPath); err == nil {
+		fmt.Printf("[✓] 配置文件: %s\n", configPath)
+	} else {
+		fmt.Printf("[!] 配置文件不存在: %s（使用 config set 创建）\n", configPath)
+	}
+
+	// 检查环境变量
+	apiKey := os.Getenv("TMK_API_KEY")
+	asrKey := os.Getenv("TMK_ASR_API_KEY")
+	transKey := os.Getenv("TMK_TRANS_API_KEY")
+
+	if apiKey != "" {
+		fmt.Printf("[✓] TMK_API_KEY 已设置 (%s)\n", config.MaskKey(apiKey))
+	} else {
+		fmt.Println("[ ] TMK_API_KEY 未设置")
+	}
+	if asrKey != "" {
+		fmt.Printf("[✓] TMK_ASR_API_KEY 已设置 (%s)\n", config.MaskKey(asrKey))
+	}
+	if transKey != "" {
+		fmt.Printf("[✓] TMK_TRANS_API_KEY 已设置 (%s)\n", config.MaskKey(transKey))
+	}
+
+	fmt.Println()
+
+	// 尝试加载完整配置
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("[✗] 配置加载失败: %v\n", err)
+		fmt.Println()
+		fmt.Println("提示:")
+		fmt.Println("  mini-tmk-agent config set provider siliconflow")
+		fmt.Println("  mini-tmk-agent config set api-key sk-xxx")
+		return nil
+	}
+
+	fmt.Printf("[✓] 服务商: %s\n", cfg.Provider)
+	fmt.Printf("[✓] ASR:    %s (%s)\n", cfg.ASRProvider, cfg.ASRModel)
+	fmt.Printf("[✓] 翻译:   %s (%s)\n", cfg.TransProvider, cfg.TransModel)
+	if cfg.TTSEnabled {
+		fmt.Printf("[✓] TTS:    %s (%s, voice=%s)\n", cfg.TTSProvider, cfg.TTSModel, cfg.TTSVoice)
+	} else {
+		fmt.Println("[ ] TTS:    未启用")
+	}
+
+	fmt.Println()
+
+	// 检查麦克风
+	if audio.IsCaptureAvailable() {
+		fmt.Println("[✓] 麦克风采集: 可用（CGO 已启用）")
+	} else {
+		fmt.Println("[ ] 麦克风采集: 不可用（CGO 未启用，stream 命令不可用）")
+	}
+
+	fmt.Println()
+	fmt.Println("所有检查完成。")
+	return nil
 }

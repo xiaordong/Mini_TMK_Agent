@@ -17,8 +17,20 @@ type ProviderPreset struct {
 	Model   string
 }
 
+// Profile 统一服务商配置，一个 provider 同时设置 ASR + Trans + TTS
+type Profile struct {
+	ASR   ProviderPreset
+	Trans ProviderPreset
+	TTS   *ProviderPreset // nil 表示该服务商不支持 TTS
+	Voice string          // TTS 默认发音人
+}
+
 // Config 全局配置
 type Config struct {
+	// 统一配置
+	Provider string `mapstructure:"provider"`
+	APIKey   string `mapstructure:"api_key"`
+
 	// ASR 配置
 	ASRProvider string `mapstructure:"asr_provider"`
 	ASRBaseURL  string `mapstructure:"asr_base_url"`
@@ -45,51 +57,44 @@ type Config struct {
 	Verbose    bool
 }
 
-// ProviderDefaults ASR provider 预设配置
+// Profiles 统一服务商预设
+var Profiles = map[string]Profile{
+	"groq": {
+		ASR:   ProviderPreset{BaseURL: "https://api.groq.com/openai/v1", Model: "whisper-large-v3-turbo"},
+		Trans: ProviderPreset{BaseURL: "https://api.groq.com/openai/v1", Model: "llama-3.3-70b-versatile"},
+	},
+	"siliconflow": {
+		ASR:   ProviderPreset{BaseURL: "https://api.siliconflow.cn/v1", Model: "FunAudioLLM/SenseVoiceSmall"},
+		Trans: ProviderPreset{BaseURL: "https://api.siliconflow.cn/v1", Model: "Qwen/Qwen3-8B"},
+		TTS:   &ProviderPreset{BaseURL: "https://api.siliconflow.cn/v1", Model: "FunAudioLLM/CosyVoice2-0.5B"},
+		Voice: "FunAudioLLM/CosyVoice2-0.5B:alex",
+	},
+	"openai": {
+		ASR:   ProviderPreset{BaseURL: "https://api.openai.com/v1", Model: "whisper-1"},
+		Trans: ProviderPreset{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"},
+		TTS:   &ProviderPreset{BaseURL: "https://api.openai.com/v1", Model: "tts-1"},
+		Voice: "alloy",
+	},
+}
+
+// 保留旧预设，向后兼容 hidden flags
 var ProviderDefaults = map[string]ProviderPreset{
-	"groq": {
-		BaseURL: "https://api.groq.com/openai/v1",
-		Model:   "whisper-large-v3-turbo",
-	},
-	"siliconflow": {
-		BaseURL: "https://api.siliconflow.cn/v1",
-		Model:   "FunAudioLLM/SenseVoiceSmall",
-	},
-	"openai": {
-		BaseURL: "https://api.openai.com/v1",
-		Model:   "whisper-1",
-	},
+	"groq":        {BaseURL: "https://api.groq.com/openai/v1", Model: "whisper-large-v3-turbo"},
+	"siliconflow": {BaseURL: "https://api.siliconflow.cn/v1", Model: "FunAudioLLM/SenseVoiceSmall"},
+	"openai":      {BaseURL: "https://api.openai.com/v1", Model: "whisper-1"},
 }
 
-// TransDefaults 翻译 provider 预设配置
 var TransDefaults = map[string]ProviderPreset{
-	"groq": {
-		BaseURL: "https://api.groq.com/openai/v1",
-		Model:   "llama-3.3-70b-versatile",
-	},
-	"siliconflow": {
-		BaseURL: "https://api.siliconflow.cn/v1",
-		Model:   "Qwen/Qwen3-8B",
-	},
-	"openai": {
-		BaseURL: "https://api.openai.com/v1",
-		Model:   "gpt-4o-mini",
-	},
+	"groq":        {BaseURL: "https://api.groq.com/openai/v1", Model: "llama-3.3-70b-versatile"},
+	"siliconflow": {BaseURL: "https://api.siliconflow.cn/v1", Model: "Qwen/Qwen3-8B"},
+	"openai":      {BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"},
 }
 
-// TTSDefaults TTS provider 预设配置
 var TTSDefaults = map[string]ProviderPreset{
-	"siliconflow": {
-		BaseURL: "https://api.siliconflow.cn/v1",
-		Model:   "FunAudioLLM/CosyVoice2-0.5B",
-	},
-	"openai": {
-		BaseURL: "https://api.openai.com/v1",
-		Model:   "tts-1",
-	},
+	"siliconflow": {BaseURL: "https://api.siliconflow.cn/v1", Model: "FunAudioLLM/CosyVoice2-0.5B"},
+	"openai":      {BaseURL: "https://api.openai.com/v1", Model: "tts-1"},
 }
 
-// TTSVoiceDefaults TTS provider 默认发音人
 var TTSVoiceDefaults = map[string]string{
 	"siliconflow": "FunAudioLLM/CosyVoice2-0.5B:alex",
 	"openai":      "alloy",
@@ -97,7 +102,6 @@ var TTSVoiceDefaults = map[string]string{
 
 // Load 加载配置，优先级：flags > 环境变量 > .env 文件 > 配置文件 > 默认值
 func Load() (*Config, error) {
-	// 先加载 .env 文件到环境变量（不覆盖已有的）
 	loadEnvFile(".env")
 
 	home, _ := os.UserHomeDir()
@@ -107,18 +111,18 @@ func Load() (*Config, error) {
 	viper.AddConfigPath(home)
 	viper.AddConfigPath(".")
 
-	// 环境变量绑定
 	viper.SetEnvPrefix("TMK")
 	viper.AutomaticEnv()
 
-	// 尝试读取配置文件（不存在也不报错）
 	_ = viper.ReadInConfig()
 
 	cfg := &Config{
-		ASRProvider:   strings.ToLower(viper.GetString("asr_provider")),
-		ASRBaseURL:    viper.GetString("asr_base_url"),
-		ASRAPIKey:     viper.GetString("asr_api_key"),
-		ASRModel:      viper.GetString("asr_model"),
+		Provider:     strings.ToLower(viper.GetString("provider")),
+		APIKey:       viper.GetString("api_key"),
+		ASRProvider:  strings.ToLower(viper.GetString("asr_provider")),
+		ASRBaseURL:   viper.GetString("asr_base_url"),
+		ASRAPIKey:    viper.GetString("asr_api_key"),
+		ASRModel:     viper.GetString("asr_model"),
 		TransProvider: strings.ToLower(viper.GetString("trans_provider")),
 		TransBaseURL:  viper.GetString("trans_base_url"),
 		TransAPIKey:   viper.GetString("trans_api_key"),
@@ -131,7 +135,48 @@ func Load() (*Config, error) {
 		TTSVoice:      viper.GetString("tts_voice"),
 	}
 
-	// 应用 ASR provider 预设
+	// 应用统一 Provider Profile
+	if cfg.Provider != "" {
+		profile, ok := Profiles[cfg.Provider]
+		if !ok {
+			return nil, fmt.Errorf("未知服务商: %s（可选: groq, siliconflow, openai）", cfg.Provider)
+		}
+		// 仅在用户未单独指定时才使用 Profile 填充
+		if cfg.ASRProvider == "" {
+			cfg.ASRProvider = cfg.Provider
+		}
+		if cfg.ASRBaseURL == "" {
+			cfg.ASRBaseURL = profile.ASR.BaseURL
+		}
+		if cfg.ASRModel == "" {
+			cfg.ASRModel = profile.ASR.Model
+		}
+		if cfg.TransProvider == "" {
+			cfg.TransProvider = cfg.Provider
+		}
+		if cfg.TransBaseURL == "" {
+			cfg.TransBaseURL = profile.Trans.BaseURL
+		}
+		if cfg.TransModel == "" {
+			cfg.TransModel = profile.Trans.Model
+		}
+		if cfg.TTSEnabled && profile.TTS != nil {
+			if cfg.TTSProvider == "" {
+				cfg.TTSProvider = cfg.Provider
+			}
+			if cfg.TTSBaseURL == "" {
+				cfg.TTSBaseURL = profile.TTS.BaseURL
+			}
+			if cfg.TTSModel == "" {
+				cfg.TTSModel = profile.TTS.Model
+			}
+			if cfg.TTSVoice == "" {
+				cfg.TTSVoice = profile.Voice
+			}
+		}
+	}
+
+	// 未设置统一 Provider 时，回退到独立 provider 逻辑
 	if cfg.ASRProvider == "" {
 		cfg.ASRProvider = "groq"
 	}
@@ -145,10 +190,8 @@ func Load() (*Config, error) {
 			}
 		}
 	}
-
-	// 应用翻译 provider 预设
 	if cfg.TransProvider == "" {
-		cfg.TransProvider = "groq"
+		cfg.TransProvider = cfg.ASRProvider
 	}
 	if cfg.TransBaseURL == "" || cfg.TransModel == "" {
 		if p, ok := TransDefaults[cfg.TransProvider]; ok {
@@ -161,7 +204,7 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// 应用 TTS provider 预设（仅在 TTS 启用时）
+	// TTS 独立 provider 预设
 	if cfg.TTSEnabled {
 		if cfg.TTSProvider == "" {
 			cfg.TTSProvider = "siliconflow"
@@ -181,12 +224,23 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// 校验必要字段
+	// 统一 API Key 回退：专用 Key > 统一 Key
 	if cfg.ASRAPIKey == "" {
-		return nil, fmt.Errorf("ASR API Key 未设置，请设置环境变量 TMK_ASR_API_KEY 或在配置文件中配置")
+		cfg.ASRAPIKey = cfg.APIKey
 	}
 	if cfg.TransAPIKey == "" {
-		return nil, fmt.Errorf("翻译 API Key 未设置，请设置环境变量 TMK_TRANS_API_KEY 或在配置文件中配置")
+		cfg.TransAPIKey = cfg.APIKey
+	}
+	if cfg.TTSEnabled && cfg.TTSAPIKey == "" {
+		cfg.TTSAPIKey = cfg.APIKey
+	}
+
+	// 校验必要字段
+	if cfg.ASRAPIKey == "" {
+		return nil, fmt.Errorf("ASR API Key 未设置，请运行: mini-tmk-agent config set api-key <key>")
+	}
+	if cfg.TransAPIKey == "" {
+		return nil, fmt.Errorf("翻译 API Key 未设置，请运行: mini-tmk-agent config set api-key <key>")
 	}
 
 	return cfg, nil
@@ -196,6 +250,20 @@ func Load() (*Config, error) {
 func ConfigFilePath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".mini-tmk-agent.yaml")
+}
+
+// Save 保存指定 key-value 到配置文件
+func Save(key, value string) error {
+	viper.Set(key, value)
+	return viper.WriteConfigAs(ConfigFilePath())
+}
+
+// MaskKey 将 API Key 脱敏显示
+func MaskKey(key string) string {
+	if len(key) <= 8 {
+		return "****"
+	}
+	return key[:4] + "****" + key[len(key)-4:]
 }
 
 // loadEnvFile 读取 .env 文件，将 KEY=VALUE 设置到环境变量（不覆盖已有值）
@@ -209,7 +277,6 @@ func loadEnvFile(path string) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		// 跳过空行和注释
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -219,13 +286,11 @@ func loadEnvFile(path string) {
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
-		// 剥离首尾引号
 		if len(value) >= 2 {
 			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
 				value = value[1 : len(value)-1]
 			}
 		}
-		// 不覆盖已有环境变量
 		if os.Getenv(key) == "" {
 			os.Setenv(key, value)
 		}
