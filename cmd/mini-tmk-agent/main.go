@@ -122,8 +122,8 @@ func main() {
 		Short: "设置配置项",
 		Example: "  mini-tmk-agent config set provider siliconflow\n" +
 			"  mini-tmk-agent config set api-key sk-xxx\n" +
-			"  mini-tmk-agent config set tts true\n" +
-			"  mini-tmk-agent config set tts-voice alex",
+			"  mini-tmk-agent config set trans-model deepseek-chat\n" +
+			"  mini-tmk-agent config set tts true",
 		Args: cobra.ExactArgs(2),
 		RunE: runConfigSet,
 	}
@@ -358,10 +358,16 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 
 	// 将用户友好的 key 映射到 viper key
 	keyMap := map[string]string{
-		"provider":  "provider",
-		"api-key":   "api_key",
-		"tts":       "tts_enabled",
-		"tts-voice": "tts_voice",
+		"provider":        "provider",
+		"api-key":         "api_key",
+		"tts":             "tts_enabled",
+		"tts-voice":       "tts_voice",
+		"asr-base-url":    "asr_base_url",
+		"asr-model":       "asr_model",
+		"trans-base-url":  "trans_base_url",
+		"trans-model":     "trans_model",
+		"tts-base-url":    "tts_base_url",
+		"tts-model":       "tts_model",
 	}
 
 	viperKey, ok := keyMap[key]

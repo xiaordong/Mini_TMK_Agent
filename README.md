@@ -95,9 +95,13 @@ mini-tmk-agent version                                          版本信息
 ./mini-tmk-agent config set provider siliconflow
 ./mini-tmk-agent config set api-key sk-xxx
 
+# 使用聚合 API 时，单独覆盖地址和模型
+./mini-tmk-agent config set asr-base-url https://your-api.com/v1
+./mini-tmk-agent config set asr-model whisper-large-v3
+./mini-tmk-agent config set trans-model deepseek-chat
+
 # 启用 TTS
 ./mini-tmk-agent config set tts true
-./mini-tmk-agent config set tts-voice FunAudioLLM/CosyVoice2-0.5B:alex
 
 # 查看当前配置（Key 脱敏显示）
 ./mini-tmk-agent config show
@@ -106,7 +110,20 @@ mini-tmk-agent version                                          版本信息
 ./mini-tmk-agent config check
 ```
 
-可设置的 key：`provider`、`api-key`、`tts`、`tts-voice`
+可设置的 key：
+
+| Key | 说明 |
+|-----|------|
+| `provider` | 统一服务商 (groq/siliconflow/openai) |
+| `api-key` | 统一 API Key |
+| `asr-base-url` | ASR API 地址（覆盖预设） |
+| `asr-model` | ASR 模型名 |
+| `trans-base-url` | 翻译 API 地址（覆盖预设） |
+| `trans-model` | 翻译模型名 |
+| `tts` | 启用 TTS (true/false) |
+| `tts-voice` | TTS 发音人 |
+| `tts-base-url` | TTS API 地址 |
+| `tts-model` | TTS 模型名 |
 
 ---
 
