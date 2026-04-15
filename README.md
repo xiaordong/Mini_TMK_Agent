@@ -202,17 +202,28 @@ TMK_TTS_ENABLED=true
 ### 流式管道
 
 ```
-麦克风 ──→ [audioChan] ──→ VAD 切句 ──→ [speechChan] ──→ ASR ──→ [textChan] ──→ 翻译(SSE) ──→ Output
- 采集        chan []byte    VAD          chan []byte     HTTP      chan *Result    SSE 流式     Console/TTS
- goroutine                goroutine                   goroutine                 goroutine
+麦克风 ──→ [audioChan] ──→ VAD 切句 ──→ [speechChan] ──→ ASR ──→ [textChan] ──→ translateDispatch
+ 采集        chan []byte    VAD          chan []byte     HTTP      chan *Result    (分配index,
+ goroutine                goroutine                   goroutine                  OnSourceText)
+                                                                        │
+                                                                  [taskChan] (缓冲=N)
+                                                                   ┌──┴──┐
+                                                                worker ×N (并行翻译)
+                                                                   └──┬──┘
+                                                                [resultChan]
+                                                                        │
+                                                                  outputLoop (串行输出)
+                                                                  Console/TTS
 ```
 
-4 个 goroutine 通过 channel 串联，各司其职：
+采集、VAD、ASR、分发 + N 个翻译 worker + 输出循环，通过 channel 串联：
 
 1. **采集**：malgo 回调写入 `audioChan`，每帧 200ms
 2. **VAD**：Silero VAD 神经网络检测（优先），能量检测兜底，1.2s 静音判定句子结束
 3. **ASR**：将完整句子 PCM 包装为 WAV，multipart POST 到 Whisper API
-4. **翻译**：SSE 流式调用 Chat Completions，每收到 delta 即时输出
+4. **翻译分发**：串行调用 `OnSourceText`，将翻译任务投入 worker pool（默认 3 路，上限 5）
+5. **翻译 Worker**：N 个并行 worker，SSE 流式调用 Chat Completions，per-task 30s 超时
+6. **输出循环**：单 goroutine 串行调用 `OnTranslatedText + OnTranslationEnd`，无需加锁
 
 ### 文件管道
 

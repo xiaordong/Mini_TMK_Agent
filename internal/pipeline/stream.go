@@ -5,12 +5,31 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"Mini_TMK_Agent/internal/asr"
 	"Mini_TMK_Agent/internal/audio"
 	"Mini_TMK_Agent/internal/output"
 	"Mini_TMK_Agent/internal/translate"
 )
+
+const (
+	defaultTranslateWorkers = 3
+	translateTaskTimeout    = 30 * time.Second
+	maxTranslateWorkers     = 5
+)
+
+type translateTask struct {
+	index   int
+	text    string
+	srcLang string
+}
+
+type translateResult struct {
+	index int
+	text  string
+	err   error
+}
 
 // StreamPipeline 流式同传管道
 type StreamPipeline struct {
@@ -20,6 +39,7 @@ type StreamPipeline struct {
 	capturer      audio.Capturer
 	sourceLang    string
 	targetLang    string
+	workers       int
 }
 
 // StreamPipelineConfig 流式管道配置
@@ -30,10 +50,18 @@ type StreamPipelineConfig struct {
 	Capturer      audio.Capturer
 	SourceLang    string
 	TargetLang    string
+	Workers       int
 }
 
 // NewStreamPipeline 创建流式同传管道
 func NewStreamPipeline(cfg StreamPipelineConfig) *StreamPipeline {
+	workers := cfg.Workers
+	if workers <= 0 {
+		workers = defaultTranslateWorkers
+	}
+	if workers > maxTranslateWorkers {
+		workers = maxTranslateWorkers
+	}
 	return &StreamPipeline{
 		asrProvider:   cfg.ASRProvider,
 		transProvider: cfg.TransProvider,
@@ -41,6 +69,7 @@ func NewStreamPipeline(cfg StreamPipelineConfig) *StreamPipeline {
 		capturer:      cfg.Capturer,
 		sourceLang:    cfg.SourceLang,
 		targetLang:    cfg.TargetLang,
+		workers:       workers,
 	}
 }
 
@@ -49,9 +78,12 @@ func (p *StreamPipeline) Run(ctx context.Context) error {
 	audioChan := make(chan []byte, 100)
 	speechChan := make(chan []byte, 10)
 	textChan := make(chan *asr.Result, 10)
+	taskChan := make(chan *translateTask, p.workers)
+	resultChan := make(chan *translateResult, p.workers)
 
 	var wg sync.WaitGroup
-	wg.Add(4)
+	// captureLoop + vadLoop + asrLoop + translateDispatch + N workers
+	wg.Add(4 + p.workers)
 
 	go func() {
 		defer wg.Done()
@@ -67,8 +99,17 @@ func (p *StreamPipeline) Run(ctx context.Context) error {
 	}()
 	go func() {
 		defer wg.Done()
-		p.translateLoop(ctx, textChan)
+		p.translateDispatch(ctx, textChan, taskChan)
 	}()
+	for i := 0; i < p.workers; i++ {
+		go func() {
+			defer wg.Done()
+			p.translateWorker(ctx, taskChan, resultChan)
+		}()
+	}
+
+	// outputLoop 不进 wg，通过 close(resultChan) 退出
+	go p.outputLoop(resultChan)
 
 	p.out.OnInfo("同声传译已启动，请开始说话...")
 
@@ -78,7 +119,10 @@ func (p *StreamPipeline) Run(ctx context.Context) error {
 	// 先停止采集（停止后回调不会再触发），再关闭 channel
 	p.capturer.Stop()
 	close(audioChan)
+
+	// 等待所有上游 goroutine 退出，然后关闭 resultChan 让 outputLoop 退出
 	wg.Wait()
+	close(resultChan)
 
 	return nil
 }
@@ -171,24 +215,62 @@ func (p *StreamPipeline) asrLoop(ctx context.Context, speechChan <-chan []byte, 
 	}
 }
 
-// translateLoop 翻译输出循环
-func (p *StreamPipeline) translateLoop(ctx context.Context, textChan <-chan *asr.Result) {
+// translateDispatch 分发翻译任务（单 goroutine，保证 OnSourceText 顺序正确）
+func (p *StreamPipeline) translateDispatch(ctx context.Context, textChan <-chan *asr.Result, taskChan chan<- *translateTask) {
+	defer close(taskChan)
+
+	index := 0
 	for result := range textChan {
 		p.out.OnSourceText(result.Text)
 
-		// 优先使用 ASR 检测到的语言，若为空则用用户指定的源语言
 		srcLang := result.Language
 		if srcLang == "" || srcLang == "auto" {
 			srcLang = p.sourceLang
 		}
 
-		err := p.transProvider.Translate(ctx, result.Text, srcLang, p.targetLang, func(chunk string) {
-			p.out.OnTranslatedText(chunk)
+		task := &translateTask{index: index, text: result.Text, srcLang: srcLang}
+		index++
+
+		select {
+		case taskChan <- task:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// translateWorker 翻译 worker（N 个并行）
+func (p *StreamPipeline) translateWorker(ctx context.Context, taskChan <-chan *translateTask, resultChan chan<- *translateResult) {
+	for task := range taskChan {
+		// per-task timeout，防止网络假死
+		taskCtx, cancel := context.WithTimeout(ctx, translateTaskTimeout)
+
+		var translated string
+		err := p.transProvider.Translate(taskCtx, task.text, task.srcLang, p.targetLang, func(chunk string) {
+			translated = chunk
 		})
-		if err != nil && ctx.Err() == nil {
-			p.out.OnError(fmt.Sprintf("翻译失败: %v", err))
+		cancel()
+
+		if err != nil {
+			// 主 context 已取消时丢弃结果，加速退出
+			if ctx.Err() != nil {
+				continue
+			}
+			resultChan <- &translateResult{index: task.index, err: err}
 			continue
 		}
+		resultChan <- &translateResult{index: task.index, text: translated}
+	}
+}
+
+// outputLoop 输出循环（单 goroutine，所有 Output 调用串行，无需加锁）
+func (p *StreamPipeline) outputLoop(resultChan <-chan *translateResult) {
+	for result := range resultChan {
+		if result.err != nil {
+			p.out.OnError(fmt.Sprintf("翻译失败: %v", result.err))
+			continue
+		}
+		p.out.OnTranslatedText(result.text)
 		p.out.OnTranslationEnd()
 	}
 }
